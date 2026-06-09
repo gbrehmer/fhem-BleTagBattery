@@ -186,7 +186,7 @@ sub BleTagBattery_Run($) {
     return undef;
 }
 
-# Bestimmt den Gerätetyp basierend auf Device-Namen
+# Bestimmt den Gerätetyp basierend auf Device-Namen und Device-Liste
 sub BleTagBattery_getDeviceType($$) {
     my ($deviceName, $deviceList) = @_;
     
@@ -197,6 +197,16 @@ sub BleTagBattery_getDeviceType($$) {
     # Shelly Blu Plus Erkennung
     elsif ( $deviceName =~ /shelly.*blu.*plus/i || $deviceList =~ /SHELLYBLU\+/i ) {
         return "shellyBluPlus";
+    }
+    # Fallback: Prüfe device_name in deviceList für bekannte Shelly Blu Muster
+    elsif ( $deviceList =~ /device_name\s+([^\s]+)/i ) {
+        my $fullDeviceName = $1;
+        if ( $fullDeviceName =~ /shelly.*blu.*button/i ) {
+            return "shellyBluButton";
+        }
+        elsif ( $fullDeviceName =~ /shelly.*blu.*plus/i ) {
+            return "shellyBluPlus";
+        }
     }
     # Standard generisches Gerät
     else {
@@ -253,7 +263,7 @@ sub BleTagBattery_BlockingRun($) {
 
                 Log3 $name, 4, "Sub BleTagBattery_BlockingRun ($name) - device name: $deviceName";
 
-                # Bestimme Gerätetyp
+                # Bestimme Gerätetyp - übergebe komplette deviceList für bessere Erkennung
                 $deviceType = BleTagBattery_getDeviceType( $deviceName, $deviceList );
                 Log3 $name, 4, "Sub BleTagBattery_BlockingRun ($name) - device type: $deviceType";
 
