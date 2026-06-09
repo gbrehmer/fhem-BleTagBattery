@@ -12,7 +12,7 @@ use strict;
 use warnings;
 use Blocking;
 
-my $version = "0.0.5";
+my $version = "0.0.6";
 
 
 # Declare functions
@@ -29,6 +29,8 @@ sub BleTagBattery_readSensorValue($$$$);
 sub BleTagBattery_convertStringToU8($);
 sub BleTagBattery_BlockingDone($);
 sub BleTagBattery_BlockingAborted($);
+sub BleTagBattery_getDeviceType($$);
+sub BleTagBattery_getShellyBatteryLevel($);
 
 
 
@@ -43,6 +45,7 @@ sub BleTagBattery_Initialize($) {
     $hash->{AttrFn}     = "BleTagBattery_Attr";
     $hash->{AttrList}   = "disable:1 ".
                           "hciDevice:hci0,hci1,hci2 ".
+                          "deviceType:generic,shellyBluButton,shellyBluPlus ".
                           $readingFnAttributes;
 
     $hash->{VERSION} = $version;
@@ -183,6 +186,39 @@ sub BleTagBattery_Run($) {
     return undef;
 }
 
+# Bestimmt den Gerätetyp basierend auf Device-Namen
+sub BleTagBattery_getDeviceType($$) {
+    my ($deviceName, $deviceList) = @_;
+    
+    # Shelly Blu Button Erkennung
+    if ( $deviceName =~ /shelly.*blu.*button/i || $deviceList =~ /SHELLYBLUBTN/i ) {
+        return "shellyBluButton";
+    }
+    # Shelly Blu Plus Erkennung
+    elsif ( $deviceName =~ /shelly.*blu.*plus/i || $deviceList =~ /SHELLYBLU\+/i ) {
+        return "shellyBluPlus";
+    }
+    # Standard generisches Gerät
+    else {
+        return "generic";
+    }
+}
+
+# Spezielle Batterieabfrage für Shelly Blu Button
+sub BleTagBattery_getShellyBatteryLevel($) {
+    my ($name, $deviceAddress, $type) = @_;
+    
+    # Shelly Blu Button nutzt auch UUID 0x2a19 (Battery Level)
+    # Aber mit spezieller Handhabung
+    my $result = BleTagBattery_readSensorValue( $name, $deviceAddress, "--uuid=0x2a19", $type );
+    
+    if ( "" ne $result ) {
+        return BleTagBattery_convertStringToU8( $result );
+    }
+    
+    return "";
+}
+
 sub BleTagBattery_BlockingRun($) {
     my $name           = shift;
     my $hash           = $defs{$name};
@@ -194,6 +230,7 @@ sub BleTagBattery_BlockingRun($) {
     my $deviceList;
     my $deviceAddress  = "";
     my $isSingleDevice = 0;
+    my $deviceType     = "";
     my $ret            = "";
 
     $result = fhem( "list MODE=lan-bluetooth", 1 );
@@ -216,6 +253,10 @@ sub BleTagBattery_BlockingRun($) {
 
                 Log3 $name, 4, "Sub BleTagBattery_BlockingRun ($name) - device name: $deviceName";
 
+                # Bestimme Gerätetyp
+                $deviceType = BleTagBattery_getDeviceType( $deviceName, $deviceList );
+                Log3 $name, 4, "Sub BleTagBattery_BlockingRun ($name) - device type: $deviceType";
+
                 if ( $deviceList =~ m/ADDRESS\s+([^\s]+)/ ) {
                     $deviceAddress = $1;
                     $batteryLevel = "";
@@ -227,19 +268,33 @@ sub BleTagBattery_BlockingRun($) {
                     if ( defined($hash->{helper}{$device}) ) {
                         Log3 $name, 4, "Sub BleTagBattery_BlockingRun ($name) - tag already saved in hash";
 
-                        $batteryLevel = BleTagBattery_convertStringToU8( BleTagBattery_readSensorValue( $name, $deviceAddress, "--uuid=0x2a19", $hash->{helper}{$device} ) );
+                        if ( $deviceType eq "shellyBluButton" || $deviceType eq "shellyBluPlus" ) {
+                            $batteryLevel = BleTagBattery_getShellyBatteryLevel( $name, $deviceAddress, $hash->{helper}{$device} );
+                        } else {
+                            $batteryLevel = BleTagBattery_convertStringToU8( BleTagBattery_readSensorValue( $name, $deviceAddress, "--uuid=0x2a19", $hash->{helper}{$device} ) );
+                        }
                     } else {
                         # try to connect with public and store this setting if successful
                         Log3 $name, 4, "Sub BleTagBattery_BlockingRun ($name) - try to connect with public";
 
-                        $batteryLevel = BleTagBattery_convertStringToU8( BleTagBattery_readSensorValue( $name, $deviceAddress, "--uuid=0x2a19", "public" ) );
+                        if ( $deviceType eq "shellyBluButton" || $deviceType eq "shellyBluPlus" ) {
+                            $batteryLevel = BleTagBattery_getShellyBatteryLevel( $name, $deviceAddress, "public" );
+                        } else {
+                            $batteryLevel = BleTagBattery_convertStringToU8( BleTagBattery_readSensorValue( $name, $deviceAddress, "--uuid=0x2a19", "public" ) );
+                        }
+                        
                         if ( "" ne $batteryLevel ) {
                             $setting = "public";
                         } else {
                             # try to connect with random and store this setting if successful
                             Log3 $name, 4, "Sub BleTagBattery_BlockingRun ($name) - try to connect with random";
 
-                            $batteryLevel = BleTagBattery_convertStringToU8( BleTagBattery_readSensorValue( $name, $deviceAddress, "--uuid=0x2a19", "random" ) );
+                            if ( $deviceType eq "shellyBluButton" || $deviceType eq "shellyBluPlus" ) {
+                                $batteryLevel = BleTagBattery_getShellyBatteryLevel( $name, $deviceAddress, "random" );
+                            } else {
+                                $batteryLevel = BleTagBattery_convertStringToU8( BleTagBattery_readSensorValue( $name, $deviceAddress, "--uuid=0x2a19", "random" ) );
+                            }
+                            
                             if ( "" ne $batteryLevel ) {
                                 $setting = "random";
                             }
@@ -247,12 +302,12 @@ sub BleTagBattery_BlockingRun($) {
                     }
 
                     if ( "" eq $batteryLevel ) {
-                        Log3 $name, 4, "Sub BleTagBattery_BlockingRun ($name) - tag not supported";
+                        Log3 $name, 4, "Sub BleTagBattery_BlockingRun ($name) - tag not supported or not reachable";
                     } else {
-                        $ret .= "|$device|$batteryLevel|$setting";
+                        $ret .= "|$device|$batteryLevel|$setting|$deviceType";
                     }
 
-                    Log3 $name, 4, "Sub BleTagBattery_BlockingRun ($name) - processing gatttool response for device $device. batteryLevel: $batteryLevel";
+                    Log3 $name, 4, "Sub BleTagBattery_BlockingRun ($name) - processing gatttool response for device $device. batteryLevel: $batteryLevel, deviceType: $deviceType";
                 } else {
                     Log3 $name, 4, "Sub BleTagBattery_BlockingRun ($name) - device address not found.";
                 }
@@ -326,21 +381,24 @@ sub BleTagBattery_BlockingDone($) {
     Log3 $name, 4, "Sub BleTagBattery_BlockingDone ($name) - helper disabled. abort" if ( $hash->{helper}{DISABLED} );
     return if ( $hash->{helper}{DISABLED} );
 
-    for ($i = 0; $i < ((scalar(@param) - 1) / 3); $i++) {
-        my $targetHash = $defs{$param[1 + ($i * 3)]};
+    # Neue Logik: pro Gerät sind es 4 Parameter (device, batteryLevel, setting, deviceType)
+    for ($i = 0; $i < ((scalar(@param) - 1) / 4); $i++) {
+        my $targetHash = $defs{$param[1 + ($i * 4)]};
 
-        if ( "none" ne $param[3 + ($i * 3)] ) {
-            Log3 $name, 4, "Sub BleTagBattery_BlockingDone ($name) - setting saved into hash: $param[3 + ($i * 3)]";
+        if ( "none" ne $param[3 + ($i * 4)] ) {
+            Log3 $name, 4, "Sub BleTagBattery_BlockingDone ($name) - setting saved into hash: $param[3 + ($i * 4)]";
 
-            $hash->{helper}{$param[1 + ($i * 3)]} = $param[3 + ($i * 3)];
+            $hash->{helper}{$param[1 + ($i * 4)]} = $param[3 + ($i * 4)];
         }
 
-        Log3 $name, 4, "Sub BleTagBattery_BlockingDone ($name) - set readings batteryLevel and battery of device: $param[1 + ($i * 3)]";
+        my $deviceType = $param[4 + ($i * 4)] // "generic";
+        Log3 $name, 4, "Sub BleTagBattery_BlockingDone ($name) - set readings batteryLevel and battery of device: $param[1 + ($i * 4)], type: $deviceType";
 
         if ( defined($targetHash) ) {
             readingsBeginUpdate( $targetHash );
-            readingsBulkUpdate( $targetHash, "batteryLevel", $param[2 + ($i * 3)] );
-            readingsBulkUpdate( $targetHash, "battery", ($param[2 + ($i * 3)] > 15 ? "ok" : "low") );
+            readingsBulkUpdate( $targetHash, "batteryLevel", $param[2 + ($i * 4)] );
+            readingsBulkUpdate( $targetHash, "battery", ($param[2 + ($i * 4)] > 15 ? "ok" : "low") );
+            readingsBulkUpdate( $targetHash, "deviceType", $deviceType );
             readingsEndUpdate( $targetHash, 1 );
         } else {
             Log3 $name, 4, "Sub BleTagBattery_BlockingDone ($name) - target hash not found.";
@@ -368,14 +426,10 @@ sub BleTagBattery_BlockingAborted($) {
 
 
 
-
-
-
-
 =pod
 =item device
-=item summary       Modul to retrieve the battery state from bluetooth low energy tags
-=item summary_DE    Modul um den Batteriestatus von Bluetooth Low Energy Tags auszulesen
+=item summary       Modul to retrieve the battery state from bluetooth low energy tags (including Shelly Blu Button)
+=item summary_DE    Modul um den Batteriestatus von Bluetooth Low Energy Tags auszulesen (einschliesslich Shelly Blu Button)
 
 =begin html
 
