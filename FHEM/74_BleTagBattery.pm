@@ -30,7 +30,7 @@ sub BleTagBattery_convertStringToU8($);
 sub BleTagBattery_BlockingDone($);
 sub BleTagBattery_BlockingAborted($);
 sub BleTagBattery_getDeviceType($$);
-sub BleTagBattery_getShellyBatteryLevel($);
+sub BleTagBattery_getShellyBatteryLevel($$$);
 
 
 
