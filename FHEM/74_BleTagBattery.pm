@@ -205,7 +205,7 @@ sub BleTagBattery_getDeviceType($$) {
 }
 
 # Spezielle Batterieabfrage für Shelly Blu Button
-sub BleTagBattery_getShellyBatteryLevel($) {
+sub BleTagBattery_getShellyBatteryLevel($$$) {
     my ($name, $deviceAddress, $type) = @_;
     
     # Shelly Blu Button nutzt auch UUID 0x2a19 (Battery Level)
